@@ -1,0 +1,63 @@
+name: Deploy Frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+
+env:
+  AWS_REGION: us-east-1
+  FRONTEND_BUCKET: library-catalog-frontend-905418054237
+  CLOUDFRONT_COMMENT: library-catalog-frontend
+  ALB_NAME: library-catalog-alb
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # The ALB's DNS name is AWS-generated, but the ALB's own name is
+      # deterministic (set by Terraform), so we look it up by name instead of
+      # needing a Terraform output or a stored secret/variable.
+      - name: Look up backend ALB DNS name
+        id: alb
+        run: |
+          DNS=$(aws elbv2 describe-load-balancers \
+            --names "$ALB_NAME" \
+            --query 'LoadBalancers[0].DNSName' --output text)
+          echo "dns=$DNS" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install and build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+        env:
+          VITE_API_BASE_URL: http://${{ steps.alb.outputs.dns }}
+
+      - name: Sync build to S3
+        run: aws s3 sync frontend/dist/ "s3://${FRONTEND_BUCKET}" --delete
+
+      # Same pattern as the ALB lookup: the distribution's ID is
+      # AWS-generated, but its `comment` (set in infra/modules/frontend) is
+      # deterministic, so no Terraform state access is needed here either.
+      - name: Invalidate CloudFront cache
+        run: |
+          DIST_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='${CLOUDFRONT_COMMENT}'].Id" \
+            --output text)
+          aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*"

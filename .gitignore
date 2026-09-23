@@ -1,0 +1,15 @@
+node_modules/
+dist/
+build/
+.env
+*.log
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+# Note: .terraform.lock.hcl IS committed on purpose (pins provider versions)
+
+.DS_Store

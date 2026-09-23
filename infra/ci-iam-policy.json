@@ -1,0 +1,123 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "TerraformStateBackend",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::library-catalog-tfstate-905418054237",
+        "arn:aws:s3:::library-catalog-tfstate-905418054237/*"
+      ]
+    },
+    {
+      "Sid": "AppBucketsForDeploys",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::library-catalog-frontend-905418054237",
+        "arn:aws:s3:::library-catalog-frontend-905418054237/*",
+        "arn:aws:s3:::library-catalog-deploy-artifacts-905418054237",
+        "arn:aws:s3:::library-catalog-deploy-artifacts-905418054237/*"
+      ]
+    },
+    {
+      "Sid": "S3BucketLifecycleForTerraform",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:PutBucketVersioning",
+        "s3:PutEncryptionConfiguration",
+        "s3:PutBucketPublicAccessBlock",
+        "s3:PutBucketPolicy",
+        "s3:GetBucketPolicy",
+        "s3:GetEncryptionConfiguration",
+        "s3:GetBucketVersioning",
+        "s3:GetBucketPublicAccessBlock"
+      ],
+      "Resource": [
+        "arn:aws:s3:::library-catalog-frontend-905418054237",
+        "arn:aws:s3:::library-catalog-deploy-artifacts-905418054237"
+      ]
+    },
+    {
+      "Sid": "NetworkingComputeAndLoadBalancing",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:*",
+        "elasticloadbalancing:*",
+        "autoscaling:*",
+        "cloudfront:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "RdsForThisProject",
+      "Effect": "Allow",
+      "Action": [
+        "rds:*",
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:CreateSecret",
+        "secretsmanager:DeleteSecret",
+        "secretsmanager:TagResource",
+        "secretsmanager:PutSecretValue",
+        "secretsmanager:RotateSecret"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "IamForTheOneInstanceRole",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:GetRole",
+        "iam:PassRole",
+        "iam:TagRole",
+        "iam:CreatePolicy",
+        "iam:DeletePolicy",
+        "iam:GetPolicy",
+        "iam:GetPolicyVersion",
+        "iam:ListPolicyVersions",
+        "iam:PutRolePolicy",
+        "iam:GetRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListInstanceProfilesForRole",
+        "iam:CreateInstanceProfile",
+        "iam:DeleteInstanceProfile",
+        "iam:GetInstanceProfile",
+        "iam:AddRoleToInstanceProfile",
+        "iam:RemoveRoleFromInstanceProfile"
+      ],
+      "Resource": [
+        "arn:aws:iam::905418054237:role/library-catalog-*",
+        "arn:aws:iam::905418054237:instance-profile/library-catalog-*",
+        "arn:aws:iam::905418054237:policy/library-catalog-*"
+      ]
+    },
+    {
+      "Sid": "SsmForDeploys",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:SendCommand",
+        "ssm:GetCommandInvocation",
+        "ssm:ListCommandInvocations",
+        "ssm:DescribeInstanceInformation"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

@@ -1,0 +1,114 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+
+env:
+  AWS_REGION: us-east-1
+  DEPLOY_BUCKET: library-catalog-deploy-artifacts-905418054237
+  ASG_NAME: library-catalog-asg
+  DB_IDENTIFIER: library-catalog-db
+  DB_NAME: library
+  APP_PORT: "3000"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      # deploy.sh runs `node src/index.js` directly with no install step, so
+      # the artifact must ship with node_modules already populated.
+      - name: Install production dependencies
+        working-directory: backend
+        run: npm ci --omit=dev
+
+      - name: Package app
+        working-directory: backend
+        run: zip -qr ../app.zip src package.json package-lock.json node_modules
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload artifact and deploy script
+        run: |
+          aws s3 cp app.zip "s3://${DEPLOY_BUCKET}/backend/latest.zip"
+          aws s3 cp backend/deploy/deploy.sh "s3://${DEPLOY_BUCKET}/backend/deploy.sh"
+
+      # DB host/port/secret ARN are AWS-generated (or only known post-apply),
+      # so look them up by the DB's deterministic identifier rather than
+      # depending on Terraform outputs inside this workflow.
+      - name: Look up DB connection details
+        id: db
+        run: |
+          HOST=$(aws rds describe-db-instances --db-instance-identifier "$DB_IDENTIFIER" \
+            --query 'DBInstances[0].Endpoint.Address' --output text)
+          PORT=$(aws rds describe-db-instances --db-instance-identifier "$DB_IDENTIFIER" \
+            --query 'DBInstances[0].Endpoint.Port' --output text)
+          SECRET_ARN=$(aws rds describe-db-instances --db-instance-identifier "$DB_IDENTIFIER" \
+            --query 'DBInstances[0].MasterUserSecret.SecretArn' --output text)
+          echo "host=$HOST" >> "$GITHUB_OUTPUT"
+          echo "port=$PORT" >> "$GITHUB_OUTPUT"
+          echo "secret_arn=$SECRET_ARN" >> "$GITHUB_OUTPUT"
+
+      # Re-runs the exact same deploy.sh used at instance first-boot, this
+      # time via SSM Run Command instead of user_data - no SSH involved.
+      - name: Redeploy on running instances via SSM
+        env:
+          DB_HOST: ${{ steps.db.outputs.host }}
+          DB_PORT: ${{ steps.db.outputs.port }}
+          DB_SECRET_ARN: ${{ steps.db.outputs.secret_arn }}
+        run: |
+          COMMANDS_JSON=$(cat <<JSON
+          [
+            "export DEPLOY_BUCKET=${DEPLOY_BUCKET}",
+            "export AWS_REGION=${AWS_REGION}",
+            "export DB_SECRET_ARN=${DB_SECRET_ARN}",
+            "export DB_HOST=${DB_HOST}",
+            "export DB_PORT=${DB_PORT}",
+            "export DB_NAME=${DB_NAME}",
+            "export APP_PORT=${APP_PORT}",
+            "aws s3 cp s3://${DEPLOY_BUCKET}/backend/deploy.sh /tmp/deploy.sh --region ${AWS_REGION}",
+            "chmod +x /tmp/deploy.sh",
+            "/tmp/deploy.sh"
+          ]
+          JSON
+          )
+
+          COMMAND_ID=$(aws ssm send-command \
+            --document-name "AWS-RunShellScript" \
+            --targets "Key=tag:aws:autoscaling:groupName,Values=${ASG_NAME}" \
+            --comment "library-catalog backend redeploy" \
+            --parameters commands="$COMMANDS_JSON" \
+            --query "Command.CommandId" --output text)
+          echo "SSM command: $COMMAND_ID"
+
+          STATUSES=""
+          for i in $(seq 1 30); do
+            sleep 10
+            STATUSES=$(aws ssm list-command-invocations --command-id "$COMMAND_ID" --query "CommandInvocations[].Status" --output text)
+            echo "Invocation statuses: $STATUSES"
+            case "$STATUSES" in
+              *InProgress*|*Pending*) continue ;;
+            esac
+            break
+          done
+
+          case "$STATUSES" in
+            *Failed*|*Cancelled*|*TimedOut*|"")
+              echo "One or more instances failed to redeploy" >&2
+              exit 1
+              ;;
+          esac
